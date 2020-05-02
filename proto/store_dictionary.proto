@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package store_dictionary;
+
+message ChunkDescriptor {
+  // Hash of chunk data
+  bytes checksum = 1;
+
+  // Size of chunk data
+  uint32 source_size = 2;
+}
+
+message ChunkerParameters {
+  enum ChunkingAlgorithm {
+    BUZHASH = 0;
+    ROLLSUM = 1;
+    FIXED_SIZE = 2;
+  }
+  uint32 chunk_filter_bits = 1;
+  uint32 min_chunk_size = 2;
+  // max_chunk_size is also the fixed chunk size when FIXED_SIZE is set
+  uint32 max_chunk_size = 3;
+  uint32 rolling_hash_window_size = 4;
+  uint32 chunk_hash_length = 5;
+  ChunkingAlgorithm chunking_algorithm = 6;
+}
+
+message StoreDictionary {
+  // Dictionary was created with this version
+  string application_version = 1;
+
+  // Hash of the source file
+  bytes source_checksum = 2;
+
+  // Total size of the source file
+  uint64 source_total_size = 3;
+
+  // Array of descriptor indexes in source order
+  repeated uint32 source_order = 4;
+
+  // Chunk descriptors in order of first occurence in source file
+  repeated ChunkDescriptor chunk_descriptors = 5;
+
+  // Chunker parameters used to chunk the source
+  ChunkerParameters chunker_params = 6;
+}
