@@ -10,6 +10,7 @@ use tokio::fs::{create_dir_all, File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use url::Url;
 
+use crate::size_str::size_str;
 use crate::storedict;
 use crate::STORE_MAGIC;
 
@@ -200,17 +201,29 @@ async fn clone_with_reader<R>(
 
     let mut store = ChunkStore::new(store_root);
     let clone_opts = bitar::CloneOptions::default();
-
     // Don't fetch chunks already in store
     let mut chunks_left = store
         .filter_present_chunks(verify_present, &chunks_to_get)
         .await
         .expect("filter chunks");
+    let bytes_to_fetch: u64 = archive
+        .chunk_descriptors()
+        .iter()
+        .map(|cd| {
+            if chunks_left.contains(&cd.checksum) {
+                cd.archive_size as u64
+            } else {
+                0
+            }
+        })
+        .sum();
 
     info!(
-        "{} chunks present in store, {} chunks to fetch",
+        "{} chunks present in store, {} chunks to fetch ({} / {})",
         chunks_to_get.len() - chunks_left.len(),
-        chunks_left.len()
+        chunks_left.len(),
+        size_str(bytes_to_fetch),
+        size_str(archive.compressed_size())
     );
 
     // Fetch the rest of the chunks from archive
