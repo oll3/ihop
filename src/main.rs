@@ -1,3 +1,4 @@
+mod chunk_map;
 mod clone;
 mod mount;
 mod mount_file;

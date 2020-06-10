@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use bitar::{ChunkIndex, ChunkSizeAndOffset, CloneOutput, HashSum};
+use bitar::{clone::CloneOutput, ChunkIndex, HashSum};
 use blake2::{Blake2b, Digest};
 use log::*;
 use prost::Message;
@@ -80,28 +80,28 @@ impl ChunkStore {
         &self,
         verify: bool,
         chunks: &ChunkIndex,
-    ) -> Result<ChunkIndex, bitar::Error> {
-        let mut new_index: HashMap<HashSum, ChunkSizeAndOffset> = HashMap::new();
-        for (hash, v) in chunks.iter() {
+    ) -> Result<ChunkIndex, std::io::Error> {
+        let mut new_index = ChunkIndex::new_empty();
+        for (hash, location) in chunks.iter_chunks() {
             // Test if chunk file exists
             let chunk_path = self.root_path.join(chunk_path_from_hash(hash));
             match OpenOptions::new().read(true).open(chunk_path).await {
                 Ok(mut chunk_file) => {
                     if verify {
-                        let mut chunk_buf = Vec::with_capacity(v.size);
+                        let mut chunk_buf = Vec::with_capacity(location.size());
                         if match chunk_file.read_to_end(&mut chunk_buf).await {
                             Ok(_) => HashSum::b2_digest(&chunk_buf, hash.len()) != *hash,
                             Err(_err) => false,
                         } {
                             // Chunk present but seems corrupt
                             warn!("Chunk {} corrupt, will be re-fetched", hash);
-                            new_index.insert(hash.clone(), v.clone());
+                            new_index.add_chunk(hash.clone(), location.size(), location.offsets());
                         }
                     }
                 }
                 Err(_err) => {
                     // Chunk is not present
-                    new_index.insert(hash.clone(), v.clone());
+                    new_index.add_chunk(hash.clone(), location.size(), location.offsets());
                 }
             }
         }
@@ -109,11 +109,11 @@ impl ChunkStore {
     }
 
     fn chunker_config_to_params(
-        conf: &bitar::ChunkerConfig,
+        conf: &bitar::chunker::Config,
         chunk_hash_length: u32,
     ) -> storedict::ChunkerParameters {
         match conf {
-            bitar::ChunkerConfig::BuzHash(hash_config) => storedict::ChunkerParameters {
+            bitar::chunker::Config::BuzHash(hash_config) => storedict::ChunkerParameters {
                 chunk_hash_length,
                 chunk_filter_bits: hash_config.filter_bits.bits(),
                 chunking_algorithm: storedict::chunker_parameters::ChunkingAlgorithm::Buzhash
@@ -122,7 +122,7 @@ impl ChunkStore {
                 max_chunk_size: hash_config.max_chunk_size as u32,
                 rolling_hash_window_size: hash_config.window_size as u32,
             },
-            bitar::ChunkerConfig::RollSum(hash_config) => storedict::ChunkerParameters {
+            bitar::chunker::Config::RollSum(hash_config) => storedict::ChunkerParameters {
                 chunk_hash_length,
                 chunk_filter_bits: hash_config.filter_bits.bits(),
                 chunking_algorithm: storedict::chunker_parameters::ChunkingAlgorithm::Rollsum
@@ -131,7 +131,7 @@ impl ChunkStore {
                 max_chunk_size: hash_config.max_chunk_size as u32,
                 rolling_hash_window_size: hash_config.window_size as u32,
             },
-            bitar::ChunkerConfig::FixedSize(fixed_size) => storedict::ChunkerParameters {
+            bitar::chunker::Config::FixedSize(fixed_size) => storedict::ChunkerParameters {
                 chunk_hash_length,
                 chunk_filter_bits: 0,
                 chunking_algorithm: storedict::chunker_parameters::ChunkingAlgorithm::FixedSize
@@ -144,6 +144,19 @@ impl ChunkStore {
     }
 
     fn dictionary(&self, archive: &bitar::Archive) -> storedict::StoreDictionary {
+        let mut chunk_to_index: HashMap<HashSum, usize> = HashMap::new();
+        let descriptors = archive
+            .chunk_descriptors()
+            .iter()
+            .enumerate()
+            .map(|(index, desc)| {
+                chunk_to_index.insert(desc.checksum.clone(), index);
+                storedict::ChunkDescriptor {
+                    checksum: desc.checksum.to_vec(),
+                    source_size: desc.source_size,
+                }
+            })
+            .collect();
         storedict::StoreDictionary {
             application_version: crate::PKG_VERSION.to_string(),
             chunker_params: Some(Self::chunker_config_to_params(
@@ -152,27 +165,24 @@ impl ChunkStore {
             )),
             source_checksum: archive.source_checksum().to_vec(),
             source_total_size: archive.total_source_size(),
-            source_order: archive.rebuild_order().to_vec(),
-            chunk_descriptors: archive
-                .chunk_descriptors()
-                .iter()
-                .map(|desc| storedict::ChunkDescriptor {
-                    checksum: desc.checksum.to_vec(),
-                    source_size: desc.source_size,
-                })
+            source_order: archive
+                .iter_source_chunks()
+                .map(|(_, cd)| *chunk_to_index.get(&cd.checksum).unwrap() as u32)
                 .collect(),
+            chunk_descriptors: descriptors,
         }
     }
 }
 
 #[async_trait]
 impl CloneOutput for ChunkStore {
+    type Error = std::io::Error;
     async fn write_chunk(
         &mut self,
         hash: &HashSum,
         _offsets: &[u64],
         buf: &[u8],
-    ) -> Result<(), bitar::Error> {
+    ) -> Result<(), std::io::Error> {
         let chunk_path = self.root_path.join(chunk_path_from_hash(hash));
         create_dir_all(chunk_path.parent().expect("chunk subdir")).await?;
         let mut file = OpenOptions::new()
@@ -193,14 +203,15 @@ async fn clone_with_reader<R>(
     verify_present: bool,
 ) where
     R: bitar::Reader,
+    R::Error: std::fmt::Debug + Send + Sync + 'static,
 {
     let archive = bitar::Archive::try_init(&mut reader)
         .await
         .expect("init archive");
-    let chunks_to_get = archive.source_index().clone();
+    let chunks_to_get = archive.build_source_index();
 
     let mut store = ChunkStore::new(store_root);
-    let clone_opts = bitar::CloneOptions::default();
+    let clone_opts = bitar::clone::Options::default();
     // Don't fetch chunks already in store
     let mut chunks_left = store
         .filter_present_chunks(verify_present, &chunks_to_get)
@@ -227,7 +238,7 @@ async fn clone_with_reader<R>(
     );
 
     // Fetch the rest of the chunks from archive
-    bitar::clone_from_archive(
+    bitar::clone::from_archive(
         &clone_opts,
         &mut reader,
         &archive,

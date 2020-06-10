@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use bitar::{ChunkLocation, ChunkLocationMap, HashSum};
+use bitar::HashSum;
 use blake2::{Blake2b, Digest};
 use log::*;
 use std::convert::TryInto;
@@ -7,15 +7,17 @@ use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use tokio::{fs::File, io::AsyncReadExt};
 
-use crate::clone::chunk_path_from_hash;
-use crate::mount_file;
-use crate::nbd;
+use crate::{
+    chunk_map::{ChunkMap, ChunkOffsetSize},
+    clone::chunk_path_from_hash,
+    mount_file, nbd,
+};
 
 struct IhopBackedDevice {
     root_path: PathBuf,
     block_size: u32,
     block_count: u64,
-    chunk_location_map: ChunkLocationMap<PathBuf>,
+    chunk_location_map: ChunkMap<PathBuf>,
 }
 
 #[async_trait]
@@ -24,8 +26,8 @@ impl nbd::BlockDevice for IhopBackedDevice {
         let mut buf_offset = 0;
         let mut locations = self
             .chunk_location_map
-            .iter_overlapping(&ChunkLocation::new(offset, buf.len()))
-            .collect::<Vec<(&ChunkLocation, &PathBuf)>>();
+            .iter_overlapping(ChunkOffsetSize::new(offset, buf.len()))
+            .collect::<Vec<(&ChunkOffsetSize, &PathBuf)>>();
         locations.sort_by(|(loca, _), (locb, _)| loca.offset.partial_cmp(&locb.offset).unwrap());
         for (location, path) in locations {
             let mut chunk_file = File::open(self.root_path.join(path))
@@ -72,13 +74,13 @@ fn make_device(
     block_size: u32,
 ) -> IhopBackedDevice {
     let mut offset: u64 = 0;
-    let mut chunk_location_map: ChunkLocationMap<PathBuf> = ChunkLocationMap::new();
+    let mut chunk_location_map: ChunkMap<PathBuf> = ChunkMap::new();
     for index in &dictionary.source_order {
         let cd = &dictionary.chunk_descriptors[*index as usize];
         let hash = HashSum::from_vec(cd.checksum.clone());
         let chunk_path = chunk_path_from_hash(&hash);
         chunk_location_map.insert(
-            ChunkLocation::new(offset, cd.source_size as usize),
+            ChunkOffsetSize::new(offset, cd.source_size as usize),
             chunk_path,
         );
         offset += cd.source_size as u64;
