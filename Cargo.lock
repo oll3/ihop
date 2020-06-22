@@ -531,7 +531,7 @@ dependencies = [
 
 [[package]]
 name = "ihop"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait 0.1.36 (registry+https://github.com/rust-lang/crates.io-index)",
  "bitar 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
