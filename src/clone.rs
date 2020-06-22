@@ -49,8 +49,8 @@ pub fn build_store_header(dictionary: &storedict::StoreDictionary) -> Vec<u8> {
     header.extend(dictionary_buf);
 
     // Create and store hash of full header
-    hasher.input(&header);
-    header.extend(&hasher.result());
+    hasher.update(&header);
+    header.extend(&hasher.finalize());
     header
 }
 

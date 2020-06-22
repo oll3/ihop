@@ -127,10 +127,10 @@ async fn mount_ihop(mut backend_file: File, root_path: &Path, nbd_dev: &Path, bl
             .expect("read checksum");
 
         let mut hasher = Blake2b::new();
-        hasher.input(&crate::STORE_MAGIC[..]);
-        hasher.input(&dict_size_buf[..]);
-        hasher.input(&dict_buf[..]);
-        let checksum = hasher.result().to_vec();
+        hasher.update(&crate::STORE_MAGIC[..]);
+        hasher.update(&dict_size_buf[..]);
+        hasher.update(&dict_buf[..]);
+        let checksum = hasher.finalize().to_vec();
 
         if checksum != expected_checksum {
             panic!(

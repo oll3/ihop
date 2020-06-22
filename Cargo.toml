@@ -12,14 +12,14 @@ categories = ["command-line-utilities", "compression", "filesystem"]
 
 [dependencies]
 tokio = { version = "0.2.21", features = ["uds", "fs", "io-std", "sync", "io-util", "macros", "time", "rt-threaded"] }
-async-trait = "0.1.35"
+async-trait = "0.1.36"
 log = "0.4.8"
 pretty_env_logger = "0.4.0"
 clap = "2.33.1"
 bitar = "0.7.0"
 url = "2.1.1"
 nbd-async = "0.1.0"
-blake2 = "0.8.1"
+blake2 = "0.9.0"
 prost  ="0.6.1"
 reqwest = "0.10.6"
 
