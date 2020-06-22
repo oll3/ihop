@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use bitar::HashSum;
 use blake2::{Blake2b, Digest};
 use log::*;
+use nbd_async::BlockDevice;
 use std::convert::TryInto;
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
@@ -10,7 +11,7 @@ use tokio::{fs::File, io::AsyncReadExt};
 use crate::{
     chunk_map::{ChunkMap, ChunkOffsetSize},
     clone::chunk_path_from_hash,
-    mount_file, nbd,
+    mount_file,
 };
 
 struct IhopBackedDevice {
@@ -21,7 +22,7 @@ struct IhopBackedDevice {
 }
 
 #[async_trait]
-impl nbd::BlockDevice for IhopBackedDevice {
+impl BlockDevice for IhopBackedDevice {
     async fn read(&mut self, mut offset: u64, buf: &mut [u8]) -> Result<(), std::io::Error> {
         let mut buf_offset = 0;
         let mut locations = self
@@ -59,6 +60,9 @@ impl nbd::BlockDevice for IhopBackedDevice {
             offset += read_from_file as u64;
         }
         Ok(())
+    }
+    async fn write(&mut self, _offset: u64, _buf: &[u8]) -> Result<(), std::io::Error> {
+        unimplemented!()
     }
     fn block_size(&self) -> u32 {
         self.block_size
@@ -140,7 +144,9 @@ async fn mount_ihop(mut backend_file: File, root_path: &Path, nbd_dev: &Path, bl
         prost::Message::decode(&dict_buf[..]).expect("decode dictionary");
 
     let device = make_device(root_path, &dictionary, block_size);
-    nbd::new_device(nbd_dev, device).await.expect("mount");
+    nbd_async::attach_device(nbd_dev, device)
+        .await
+        .expect("mount");
 }
 
 pub async fn mount(backend: &Path, nbd_dev: &Path, block_size: u32) {

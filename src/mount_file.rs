@@ -3,7 +3,7 @@ use std::io::SeekFrom;
 use std::path::Path;
 use tokio::{fs::File, io::AsyncReadExt};
 
-use crate::nbd;
+use nbd_async::BlockDevice;
 
 struct FileBackedDevice {
     current_file_offs: u64,
@@ -24,7 +24,7 @@ impl FileBackedDevice {
 }
 
 #[async_trait]
-impl nbd::BlockDevice for FileBackedDevice {
+impl BlockDevice for FileBackedDevice {
     async fn read(&mut self, offset: u64, buf: &mut [u8]) -> Result<(), std::io::Error> {
         if offset != self.current_file_offs {
             self.file.seek(SeekFrom::Start(offset)).await?;
@@ -44,6 +44,9 @@ impl nbd::BlockDevice for FileBackedDevice {
         }
         Ok(())
     }
+    async fn write(&mut self, _offset: u64, _buf: &[u8]) -> Result<(), std::io::Error> {
+        unimplemented!()
+    }
     fn block_size(&self) -> u32 {
         self.block_size
     }
@@ -59,7 +62,7 @@ pub async fn mount(backend_file: File, nbd_dev: &Path, block_size: u32) {
     };
 
     let file_backed_device = FileBackedDevice::new(block_size, block_count, backend_file);
-    nbd::new_device(nbd_dev, file_backed_device)
+    nbd_async::attach_device(nbd_dev, file_backed_device)
         .await
         .expect("mount");
 }

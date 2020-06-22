@@ -105,7 +105,7 @@ impl ChunkStore {
                 }
             }
         }
-        Ok(new_index.into())
+        Ok(new_index)
     }
 
     fn chunker_config_to_params(
