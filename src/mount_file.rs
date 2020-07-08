@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use std::io::SeekFrom;
 use std::path::Path;
+use std::{io, io::SeekFrom};
 use tokio::{fs::File, io::AsyncReadExt};
 
 use nbd_async::BlockDevice;
@@ -23,9 +23,9 @@ impl FileBackedDevice {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl BlockDevice for FileBackedDevice {
-    async fn read(&mut self, offset: u64, buf: &mut [u8]) -> Result<(), std::io::Error> {
+    async fn read(&mut self, offset: u64, buf: &mut [u8]) -> io::Result<()> {
         if offset != self.current_file_offs {
             self.file.seek(SeekFrom::Start(offset)).await?;
             self.current_file_offs = offset;
@@ -44,14 +44,8 @@ impl BlockDevice for FileBackedDevice {
         }
         Ok(())
     }
-    async fn write(&mut self, _offset: u64, _buf: &[u8]) -> Result<(), std::io::Error> {
+    async fn write(&mut self, _offset: u64, _buf: &[u8]) -> io::Result<()> {
         unimplemented!()
-    }
-    fn block_size(&self) -> u32 {
-        self.block_size
-    }
-    fn block_count(&self) -> u64 {
-        self.block_count
     }
 }
 
@@ -60,9 +54,8 @@ pub async fn mount(backend_file: File, nbd_dev: &Path, block_size: u32) {
         let metadata = backend_file.metadata().await.expect("metadata");
         (metadata.len() + block_size as u64 - 1) / block_size as u64
     };
-
-    let file_backed_device = FileBackedDevice::new(block_size, block_count, backend_file);
-    nbd_async::attach_device(nbd_dev, file_backed_device)
+    let device = FileBackedDevice::new(block_size, block_count, backend_file);
+    nbd_async::serve_local_nbd(nbd_dev, device.block_size, device.block_count, device)
         .await
         .expect("mount");
 }
